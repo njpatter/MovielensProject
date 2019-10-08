@@ -203,7 +203,7 @@ if(shouldTestLambdas) {
 
 
 
-# Section: Create needed dataframes based on optimal lambda values ------------
+# Section: Create needed dataframes for prediction using optimal lambda value ------------
 mu <- mean(edxOneHot$rating)
 lambda = 4.75
 
@@ -275,6 +275,7 @@ genreWeights_Combined <- edxWeighted %>%
 
 # Section: Create Movie Popularity Weight -------------
 # The movie popularity weight did not prove useful and so it was removed from this analysis and accompanying discussion
+
 # moviePopularityPrefWeights <- edxWeighted %>%
 #   left_join(genreWeights_Combined, by = "genres") %>%
 #   mutate(modRating = rating - b_i - b_u - b_y - b_g_c - mu)  %>%
@@ -284,6 +285,8 @@ genreWeights_Combined <- edxWeighted %>%
  
 
 # Section: Testing of all weighted approaches on validation set -------------
+# First, mutate the releaseYear variable and then join all weight tables based
+# on movieId, userId, releaseYear, or genres
 rsmeResults <- validation %>%
   group_by(movieId) %>% 
   mutate(releaseYear = as.numeric(str_extract(str_extract(title[1], "\\(\\d{4,}\\)"), "\\d{4,}"))) %>%
