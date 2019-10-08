@@ -1,0 +1,150 @@
+---
+title: "MovieLens Project"
+author: "Nathan Patterson"
+date: "October 7, 2019"
+output:
+  # html_document:
+  #   df_print: paged
+  #   toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE} 
+library(tidyverse)
+library(stringr)
+library(caret)
+library(matrixStats) 
+library(dslabs)
+library(rpart)
+library(ModelMetrics)
+library(lubridate)
+# Section : Load data from file instead of downloading it each time  ---------------
+load("C:/Users/natha/Desktop/edxWorkspace.RData")
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+<!-- This is the intro.  It describes the data set and summarizes the goal of the project and key steps that were performed.-->
+
+Creating movie recommendation systems has become a standard initiation challenge for data science newcomers.  The first HardvardX Data Science Capstone project relies on the MovieLens 10M data set for this challenge. The 10M data set contains ratings and related data submitted to the movie recommender service MovieLens; totaling ~10M ratings of ~10k movies submit by ~71k users.  
+  
+This report details the development of a weight based approach for creating a movie recommendation system based on the 10M data set. The data set is initially processed to separate genre and date information, allowing for calculation of desired metrics and for data visualization. Weights are calculated, their effects visualized, and are added to the equation for predicting ratings. Finally, the RMSE values are calculated and compared for different weight-based predictions on the validation data set.
+
+# Analysis
+
+<!-- This section that explains the process and techniques used, such as data cleaning, data exploration and visualization, any insights gained, and your modeling approach-->
+
+### Working with the Initial Data set
+Using code supplied through the HarvardX project page, the DataLens 10M data set is downloaded and separated into two data frames; the 'edx' data frame, which is intended for training and testing, and the 'validation' data frame, which is for validation and final RMSE calculation. Following the initial import, the two data frames supply the same data columns, but different entries, as seen from examining the structure of the edx data frame:
+
+```{r, echo=FALSE}
+str(edx, width = 75, strict.width = "cut") 
+
+```
+
+The imported data set illustrates a common problem with large data sets, columns that contain multiple values which are independently important. Specifically, (1) genres are all combined into a single column and (2) movie titles and release years are combined in a single column.  
+  
+The current analysis first addresses problem (1), separating the genre information into separate encoded columns. The function 'OneHotGenres' in the accompanying R script separates the entries in the combined column and fills in columns with 1's (if the movie lists a genre) and 0's (if the movie is not included in a genre).  The columns with this data are then added to the original 'edx' data frame and used to initialize the 'edxOneHot' data frame. The original genres column is kept as part of this new data frame so that a comparison of the impact of creating weights for individual genres and the impact of using combined genres can be made.  
+  
+Release years are appended to the end of movie titles which can also contain numbers (problem 2), however, the release year is specified within parentheses at the end of each entry.  This means that by using regex and string extraction combinations, the four digit year within parentheses can be extracted. The strings with years surrounded by parentheses are initially extracted from the title-year string and then a second string extraction obtains only the four digit year and converts it to a numeric value.  After separating genre and release year information from combined columns, the new 'edxOneHot' data frame is created and has the following structure:
+
+```{r, echo=FALSE}
+str(edxOneHot, width = 75, strict.width = "cut")
+```
+
+### Creating Weights for Prediction
+The weight-based approach detailed in the course text ('Introduction to Data Science', R.A. Irizarry, 2019) serves as the basis for the current approach. Specifically, the rating average ($/mu$), Movie-based ($b_{i}$), and User-based ($b_{u}$) prediction weights are initially calculated and used as follows for rating predictions:  
+
+$$Prediction = \mu + b_{i} + b_{u}$$  
+
+Following the approach in the course text, the Movie-based ($b_{i}$) and User-based ($b_{u}$) weights are calculated using the following equations:  
+
+$$b_{i}  = \sum_{u,i}^n(rating_{u,i} - \mu) / (\lambda + n_{i})$$  
+$$b_{u}  = \sum_{i,u}^n(rating_{i,u} - b_{i} - \mu) / (\lambda + n_{u})$$  
+
+
+### Determining additional weights
+Additional Year- and Genre- weights were chosen after examining the effect of each variable on the remaining score distributions.  To visualize their effects, regularized rating by year ($b_{y}$) is calculated using the following equation: 
+
+$$b_{y}  = \sum_{y}^n(rating_{y} - b_{i} - b_{u} - \mu) / (\lambda + n_{y})$$  
+
+The relationship between the regularized rating by year can then be visualized.
+
+```{r, echo=FALSE} 
+weightsYears %>% 
+  ggplot(aes(releaseYear, yearAverageMod)) +  
+  labs(x = "Release Year", y = "Regularized Rating (Movie+User Effects Removed)" ) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_point()
+
+```
+
+While the relationship maxes out with older movies at ~0.15, the obvious time-based trend still suggests it is worthwhile to include this weight in the prediction equation, which becomes:
+
+$$Prediction = \mu + b_{i} + b_{u} + b_{y}$$  
+
+As a Sci-Fi movie fan that dislikes romantic dramas, it seems obvious that there should be important rating-relevant data within the genre/rating distributions.  While extracting movie preferences (which varies by user) may require an approach that involves dimensionality reduction, two relatively simple weights are calculated.  To determine the weights for different genres, the following equation is used:
+
+$$b_{g} = \sum_{g}^n(rating_{g} - b_{i} - b_{u} - b_{y} - \mu) / (\lambda + n_{g})$$   
+
+This results in a set of 797 different weights for the original combined genre categories and 18 different weights when genre categories are separated.  However, because many movies fit into multiple genres, the 18 genre weights are combined to fit each movie.  For example, the movie 'Stargate' fit into the Action, Adventure, and Sci-Fi genres so the three weights from the set of 18 were simply added together. While the plot to visualize the modified/reduced ratings for the 797 combined genres can be difficult to read, the separated data shows genre preferences across the the entire user-base.
+
+
+```{r, echo=FALSE} 
+data.frame(genres = genrelevels[1:18], ratings = t(genreRatings)) %>% 
+  ggplot(aes(reorder(genres,ratings), ratings)) + 
+  labs(x = "Separated Genre", y = "Regularized Rating (Movie+User+Year Effects Removed)" ) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  geom_point()
+
+```
+
+ The Movie and User weights are then supplemented with two new weights that focus on Movie release year ($b_{y}$) and Genres (Combined $b_{gc}$ or Separated $b_{gs}$). This combination of weights results in the following prediction equation.
+
+$$Prediction = \mu + b_{i} + b_{u} + b_{y} + b_{gc_{or}gs}$$  
+
+Regularization for each of the weights involves the parameter $\lambda$. This value assists in regularization by reducing the effect of outliers that would otherwise not have a large denominator value; such as a rarely reviewed movie with a 5 rating or the early 1900s when new movies were themselves quite rare.  To determine the optimal value of $\lambda$, the approach detailed in the course text was extended to encompass the weights for Movies ($b_{i}$), Users ($b_{u}$), and Release years ($b_{y}$).  The $\lambda$ value chosen based on this analysis was $\lambda$ = 4.75 despite the lower value for $\lambda$ = 4.5 in the following plot.  This value oscillated between the two values depending on the randomly sampled test set. Because of the two distinct and separately implemented genre-related weights, calculation of the optimal $\lambda$ value was carried out without the genre weights.
+
+```{r, echo=FALSE} 
+data.frame(x = lambdas, y = rmsesMovUsersYear) %>% 
+  ggplot(aes(x, y)) + 
+  labs(x = "Lambda", y = "Test Set RMSE from Movie + User + Year Weights" ) + 
+  geom_point()
+
+```
+
+# Results
+
+<!--This section that presents the modeling results and discusses the model performance -->
+Following the creation of weights for Movie, User, Year, and Genre data, the weights are used to calculate a series of predictions on the 'validation' data set. Using a series of Left Join commands, the weights calculated for the 'edx' data set are appended to the 'validation' data set. Predictions are made using the aforementioned Prediction equations and the resulting RMSE values are output in the following table:
+
+```{r , echo=FALSE}
+print(t(rsmeResults))
+
+```
+
+While the Movie-based ($b_{i}$) and User-based ($b_{u}$) weights each provide ~10% progressive improvement in the RMSE values, the other weights provide considerably less benefit. While the Release year ($b_{y}$) and Genre (Combined $b_{gc}$ or Separated $b_{gs}$) weights do provide improved predictions, they each provide < 0.1% improvement over the previous weight combination. 
+
+# Conclusion
+
+<!--This section that gives a brief summary of the report, its limitations and future work (the last two are recommended but not necessary) -->
+Creating a movie recommendation system for the MovieLens 10M data set poses an interesting challenge.  The development of a weight-based approach similar to the method detailed in the text is still a time-consuming and challenging task given the size of the data set. Despite the initial view that the combined genre groupings was a problem with the dataset, the combined genres provided a superior set of weights for prediction than those calculated for separated genre information.  
+
+The final prediction equation which provides the lowest RMSE is: 
+
+$$Prediction = \mu + b_{i} + b_{u} + b_{y} + b_{gc}$$
+
+The calculated weights for Movies ($b_{i}$), Users ($b_{u}$), Release years ($b_{y}$), and Combined Genres (Combined $b_{gc}$ ) resulted in a final RMSE of:
+$$RMSE_{Movie, User, Year, Genre} = 0.8642527$$
+
+The route taken to create this analysis was embarrassingly complex.  Initial attempts involved training KNN, Random Forest, Neural Network, and other models based on additional metrics that were formulated.  These methods provided ~15% improvement over using a single mean/average value, but modifying and retesting each approach led to extremely long wait times for model training so it was eventually abandoned.  A second round of attempts involved skipping over the weight-based approach and leveraging PCA to predict principal components which were then used to train Random Forrest models for prediction of ratings.  This approach also provided ~10-15% improvement over using a single mean/average value, but the wait times associated with training and predicting these models also led it being eventually abandoned.  
+  
+The success of the relatively simple weight-based approach over more complex approaches led to an incredibly useful insight; start simple and build up complexity if needed.
+
+
+ 
+
+
+
